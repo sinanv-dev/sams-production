@@ -21,17 +21,17 @@ export const isFirebaseConfigured = !!(
 );
 
 let app;
-let auth: any = null;
-let db: any = null;
-let analytics: any = null;
+let authInstance: any = null;
+let dbInstance: any = null;
+let analyticsInstance: any = null;
 
 if (isFirebaseConfigured) {
   try {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-    auth = getAuth(app);
-    db = getFirestore(app);
+    authInstance = getAuth(app);
+    dbInstance = getFirestore(app);
     if (typeof window !== 'undefined') {
-      analytics = getAnalytics(app);
+      analyticsInstance = getAnalytics(app);
     }
     console.log("Firebase initialized successfully using environment variables.");
   } catch (error) {
@@ -41,4 +41,6 @@ if (isFirebaseConfigured) {
   console.log("SAMS: Firebase configuration is missing in environment variables. Falling back to robust LocalStorage Sandbox mode.");
 }
 
-export { auth, db, analytics };
+export const auth = authInstance;
+export const db = dbInstance;
+export const analytics = analyticsInstance;

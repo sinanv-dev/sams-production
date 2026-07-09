@@ -264,7 +264,7 @@ export const registerCustomer = async (
 
 export const loginWithEmailPassword = async (email: string, password: string): Promise<UserProfile> => {
   if (isFirebaseConfigured) {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
     const firebaseUser = userCredential.user;
     
     // Check and sync emailVerified status in db if changed
