@@ -158,13 +158,16 @@ export const RoomCreate: React.FC = () => {
 
       // Upload files to Storage if Firebase is configured
       if (isFirebaseConfigured) {
-        setUploadProgress('Compressing and uploading images to secure database...');
         for (let i = 0; i < uploadedPhotos.length; i++) {
           const item = uploadedPhotos[i];
           if (item.file) {
+            setUploadProgress(`Uploading photo ${i + 1}/${uploadedPhotos.length} (0%)...`);
             const downloadUrl = await uploadFile(
               item.file,
-              `rooms/${form.apartmentId}/${form.roomNumber}/${Date.now()}_${item.file.name}`
+              `rooms/${form.apartmentId}/${form.roomNumber}/${Date.now()}_${item.file.name}`,
+              (percent) => {
+                setUploadProgress(`Uploading photo ${i + 1}/${uploadedPhotos.length} (${percent}%)...`);
+              }
             );
             finalPhotoUrls.push(downloadUrl);
           }

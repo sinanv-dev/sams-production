@@ -1,7 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 
 import { getAnalytics } from 'firebase/analytics';
 
@@ -24,7 +23,6 @@ export const isFirebaseConfigured = !!(
 let app;
 let auth: any = null;
 let db: any = null;
-let storage: any = null;
 let analytics: any = null;
 
 if (isFirebaseConfigured) {
@@ -32,7 +30,6 @@ if (isFirebaseConfigured) {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
     auth = getAuth(app);
     db = getFirestore(app);
-    storage = getStorage(app);
     if (typeof window !== 'undefined') {
       analytics = getAnalytics(app);
     }
@@ -44,4 +41,4 @@ if (isFirebaseConfigured) {
   console.log("SAMS: Firebase configuration is missing in environment variables. Falling back to robust LocalStorage Sandbox mode.");
 }
 
-export { auth, db, storage, analytics };
+export { auth, db, analytics };
