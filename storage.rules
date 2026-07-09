@@ -2,7 +2,7 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Helper check
+    // Helper check variables
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -24,7 +24,7 @@ service firebase.storage {
       allow write: if isAdminOrOwner(); // Admins and Owners manage room assets
     }
 
-    // Customer Verification Documents (confidential Aadhar/PAN cards/Leases)
+    // Customer Verification Documents (confidential Aadhar/PAN cards/Leases/ID Proof)
     match /documents/{userId}/{allPaths=**} {
       allow read: if isOwner(userId) || isAdminOrOwner(); // Allow owners/admins to audit profiles
       allow write: if isOwner(userId) || isAdminOrOwner();
@@ -33,6 +33,12 @@ service firebase.storage {
     // User Profile Images
     match /profiles/{userId}/{allPaths=**} {
       allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+
+    // Complaint Photos
+    match /complaints/{userId}/{allPaths=**} {
+      allow read: if isOwner(userId) || isAdminOrOwner();
       allow write: if isOwner(userId);
     }
   }

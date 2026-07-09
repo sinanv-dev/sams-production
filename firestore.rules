@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // Helper check variables
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -11,69 +11,120 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
     
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    
     function isAdmin() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isAuthenticated() && userExists() && getUserData().role == 'admin';
     }
     
     function isPropertyOwner() {
+      return isAuthenticated() && userExists() && getUserData().role == 'owner';
+    }
+
+    function ownsApartment(apartmentId) {
       return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner';
+        exists(/databases/$(database)/documents/apartments/$(apartmentId)) &&
+        get(/databases/$(database)/documents/apartments/$(apartmentId)).data.ownerId == request.auth.uid;
     }
 
     // Users Collection
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if isOwner(userId) || isAdmin();
+      allow read: if isAuthenticated() && (
+        isOwner(userId) || 
+        isAdmin() || 
+        (isPropertyOwner() && resource.data.role == 'customer' && resource.data.ownerId == request.auth.uid)
+      );
+      allow create: if isAuthenticated() && (
+        isAdmin() || 
+        request.resource.data.role == 'customer'
+      );
+      allow update: if isAuthenticated() && (
+        isOwner(userId) || 
+        isAdmin() || 
+        (isPropertyOwner() && resource.data.role == 'customer' && resource.data.ownerId == request.auth.uid)
+      );
+      allow delete: if isAdmin();
     }
 
     // Apartments Collection
     match /apartments/{apartmentId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || isPropertyOwner();
+      allow write: if isAdmin() || (isPropertyOwner() && (
+        resource == null || resource.data.ownerId == request.auth.uid
+      ) && request.resource.data.ownerId == request.auth.uid);
     }
 
     // Rooms Collection
     match /rooms/{roomId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || isPropertyOwner();
+      allow write: if isAdmin() || (isPropertyOwner() && 
+        ownsApartment(request.resource.data.apartmentId || resource.data.apartmentId)
+      );
     }
 
     // Apartment Requests (Visit Requests) Collection
     match /apartmentRequests/{requestId} {
-      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || isAdmin() || isPropertyOwner());
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid || 
+        isAdmin() || 
+        (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
+      );
       allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
-      allow update, delete: if isAdmin() || isPropertyOwner();
+      allow update, delete: if isAdmin() || (isPropertyOwner() && (
+        ownsApartment(resource.data.apartmentId) || ownsApartment(request.resource.data.apartmentId)
+      ));
     }
 
     // Payments Collection
     match /payments/{paymentId} {
-      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || isAdmin() || isPropertyOwner());
-      allow write: if isAdmin() || isPropertyOwner();
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid || 
+        isAdmin() || 
+        (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
+      );
+      allow write: if isAdmin() || (isPropertyOwner() && (
+        ownsApartment(resource.data.apartmentId) || ownsApartment(request.resource.data.apartmentId)
+      ));
     }
 
     // Electricity Bills Collection
     match /electricity_bills/{billId} {
-      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || isAdmin() || isPropertyOwner());
-      allow write: if isAdmin() || isPropertyOwner();
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid || 
+        isAdmin() || 
+        (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
+      );
+      allow write: if isAdmin() || (isPropertyOwner() && (
+        ownsApartment(resource.data.apartmentId) || ownsApartment(request.resource.data.apartmentId)
+      ));
     }
 
     // Complaints Collection
     match /complaints/{complaintId} {
-      allow read: if isAuthenticated() && (resource.data.customerId == request.auth.uid || isAdmin() || isPropertyOwner());
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid || 
+        isAdmin() || 
+        (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
+      );
       allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
-      allow update: if isAuthenticated() && (resource.data.customerId == request.auth.uid || isAdmin() || isPropertyOwner());
+      allow update: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid || 
+        isAdmin() || 
+        (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
+      );
       allow delete: if isAdmin();
     }
 
     // Notifications Collection
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+      allow read, update, delete: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
       allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
     }
   }
 }
