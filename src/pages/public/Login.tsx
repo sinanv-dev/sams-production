@@ -5,6 +5,7 @@ import { Building, Shield, Lock, Mail, AlertCircle, Eye, EyeOff, CheckCircle2, R
 import { PublicLayout } from '../../layouts/PublicLayout';
 import { PhoneInput } from '../../components/auth/PhoneInput';
 import { OtpInput } from '../../components/auth/OtpInput';
+import { clearRecaptchaVerifier } from '../../firebase/auth';
 
 export const Login: React.FC = () => {
   const { login, logout, sendOtp, loginWithOtp } = useAuth();
@@ -36,6 +37,11 @@ export const Login: React.FC = () => {
   const [countdown, setCountdown] = useState(30);
   const [canResend, setCanResend] = useState(false);
 
+  // Cleanup reCAPTCHA verifier when this page unmounts.
+  useEffect(() => {
+    return () => { clearRecaptchaVerifier(); };
+  }, []);
+
   // Countdown timer effect
   useEffect(() => {
     let timer: any;
@@ -48,6 +54,7 @@ export const Login: React.FC = () => {
     }
     return () => clearInterval(timer);
   }, [otpSent, countdown]);
+
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -16,6 +16,38 @@ import { UserProfile } from '../types';
 // Temporary confirmation results cache for production
 const confirmationResults = new Map<string, ConfirmationResult>();
 
+// ─── RecaptchaVerifier singleton ────────────────────────────────────────────
+// Firebase throws "reCAPTCHA has already been rendered in this element" if you
+// call new RecaptchaVerifier() more than once on the same DOM node.  We cache
+// the single instance here and reuse it for every sendOtp / resend call.
+let recaptchaVerifierInstance: RecaptchaVerifier | null = null;
+let recaptchaContainerIdCache: string | null = null;
+
+// Call this when the registration page unmounts so the next mount gets a clean verifier.
+export const clearRecaptchaVerifier = (): void => {
+  if (recaptchaVerifierInstance) {
+    try { recaptchaVerifierInstance.clear(); } catch (_) {}
+    recaptchaVerifierInstance = null;
+    recaptchaContainerIdCache = null;
+  }
+};
+
+const getRecaptchaVerifier = (containerId: string): RecaptchaVerifier => {
+  // If the container changed (shouldn't happen) or verifier was cleared, make a new one.
+  if (!recaptchaVerifierInstance || recaptchaContainerIdCache !== containerId) {
+    recaptchaVerifierInstance = new RecaptchaVerifier(auth, containerId, {
+      size: 'invisible',
+      callback: () => {},
+      'expired-callback': () => {
+        // Token expired — clear so next call creates a fresh verifier
+        clearRecaptchaVerifier();
+      },
+    });
+    recaptchaContainerIdCache = containerId;
+  }
+  return recaptchaVerifierInstance;
+};
+
 // Sandbox mockup code storage (purely internal for simulation, never shown to user)
 const sandboxVerifiedPhones = new Set<string>();
 
@@ -106,18 +138,18 @@ export const sendOtp = async (phone: string, recaptchaContainerId?: string): Pro
   
   // Standard 10 digit Indian number format validation (Starts with 6-9)
   if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
-    throw new Error("Please enter a valid Indian mobile number.");
+    throw new Error('Please enter a valid Indian mobile number.');
   }
 
   const fullPhone = `+91${cleanPhone}`;
 
-  // Check rate limiting on OTP requests
+  // Rate limiting
   const rate = getOtpRequestCount(cleanPhone);
   if (rate.count >= 5 && (Date.now() - rate.lastRequest < 3600000)) {
-    throw new Error("Too many OTP requests. Please wait before trying again.");
+    throw new Error('Too many OTP requests. Please wait before trying again.');
   }
 
-  // Check locking due to too many incorrect OTP attempts
+  // Lockout check
   const attempts = getIncorrectAttempts(cleanPhone);
   if (attempts.lockUntil > Date.now()) {
     const minutesLeft = Math.ceil((attempts.lockUntil - Date.now()) / 60000);
@@ -126,28 +158,33 @@ export const sendOtp = async (phone: string, recaptchaContainerId?: string): Pro
 
   incrementOtpRequest(cleanPhone);
 
-  if (isFirebaseConfigured) {
-    if (!recaptchaContainerId) {
-      throw new Error("reCAPTCHA container target ID is required.");
-    }
+  if (!recaptchaContainerId) {
+    throw new Error('reCAPTCHA container target ID is required.');
+  }
 
-    // Initialize/retrieve invisible RecaptchaVerifier
-    const verifier = new RecaptchaVerifier(auth, recaptchaContainerId, {
-      size: 'invisible',
-      callback: () => {}
-    });
+  if (!auth) {
+    throw new Error('Firebase Authentication is not initialised. Check your environment variables.');
+  }
 
+  // Reuse the cached verifier — do NOT create a new one each call.
+  const verifier = getRecaptchaVerifier(recaptchaContainerId);
+
+  try {
     const confirmationResult = await signInWithPhoneNumber(auth, fullPhone, verifier);
     const verificationId = `v-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     confirmationResults.set(verificationId, confirmationResult);
-    
     return { verificationId };
-  } else {
-    // Sandbox authentication flow placeholder
-    // In local sandbox environment without Firebase configured, we generate an ID.
-    // Real SMS verification cannot happen without Firebase settings.
-    const verificationId = `sandbox-v-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    return { verificationId };
+  } catch (err: any) {
+    // If Firebase reports the verifier is stale/broken, clear it so the next
+    // attempt creates a fresh one rather than reusing a dead instance.
+    if (
+      err.code === 'auth/argument-error' ||
+      err.code === 'auth/captcha-check-failed' ||
+      err.message?.includes('reCAPTCHA')
+    ) {
+      clearRecaptchaVerifier();
+    }
+    throw err;
   }
 };
 

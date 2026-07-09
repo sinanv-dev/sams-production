@@ -5,6 +5,7 @@ import { Building, User, Mail, Lock, Phone, AlertCircle, ArrowLeft, ArrowRight, 
 import { PublicLayout } from '../../layouts/PublicLayout';
 import { PhoneInput } from '../../components/auth/PhoneInput';
 import { OtpInput } from '../../components/auth/OtpInput';
+import { clearRecaptchaVerifier } from '../../firebase/auth';
 
 export const Register: React.FC = () => {
   const navigate = useNavigate();
@@ -59,6 +60,14 @@ export const Register: React.FC = () => {
     strengthColor = 'bg-amber-500';
     strengthTextColor = 'text-amber-500';
   }
+
+  // Cleanup reCAPTCHA verifier when this page unmounts.
+  // Without this, navigating away and back creates a second verifier on the
+  // same #recaptcha-container DOM node, causing Firebase to throw:
+  // "reCAPTCHA has already been rendered in this element"
+  useEffect(() => {
+    return () => { clearRecaptchaVerifier(); };
+  }, []);
 
   // Timer Effect
   useEffect(() => {
