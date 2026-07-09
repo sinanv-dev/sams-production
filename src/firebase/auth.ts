@@ -181,184 +181,103 @@ export const registerCustomer = async (
   const cleanPhone = phoneNumber.replace(/\D/g, '');
   const fullPhone = `+91${cleanPhone}`;
 
-  if (isFirebaseConfigured) {
-    if (!verificationId || !otp) {
-      throw new Error("OTP verification is required for registration.");
-    }
-
-    const confirmationResult = confirmationResults.get(verificationId);
-    if (!confirmationResult) {
-      throw new Error("OTP verification session expired.");
-    }
-
-    // Double check email/phone availability
-    const allUsers = await getUsers();
-    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) {
-      throw new Error("Email already registered.");
-    }
-    if (allUsers.some(u => u.phoneNumber === fullPhone)) {
-      throw new Error("Mobile number already registered.");
-    }
-
-    // 1. Verify Phone OTP
-    const phoneUserCredential = await confirmationResult.confirm(otp);
-    const phoneUser = phoneUserCredential.user;
-
-    // 2. Create the email/password account
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const firebaseUser = userCredential.user;
-
-    // Send email verification
-    await sendEmailVerification(firebaseUser);
-
-    // Save profile with verified fields
-    const profile = await createUserProfile(firebaseUser.uid, {
-      email,
-      displayName,
-      role: 'customer',
-      phoneNumber: fullPhone,
-      phoneVerified: true,
-      emailVerified: false,
-      status: 'active'
-    });
-
-    confirmationResults.delete(verificationId);
-    return profile;
-  } else {
-    // Sandbox Registration
-    if (verificationId && otp) {
-      await verifyOtpOnly(verificationId, otp);
-    } else {
-      throw new Error("OTP verification is required.");
-    }
-
-    const usersJson = localStorage.getItem('sams_users');
-    const users: UserProfile[] = usersJson ? JSON.parse(usersJson) : [];
-    
-    if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
-      throw new Error("Email already registered.");
-    }
-    if (users.some(u => u.phoneNumber === fullPhone)) {
-      throw new Error("Mobile number already registered.");
-    }
-
-    const uid = `customer-${Math.random().toString(36).substr(2, 9)}`;
-    const newProfile = await createUserProfile(uid, {
-      email,
-      displayName,
-      role: 'customer',
-      phoneNumber: fullPhone,
-      phoneVerified: true,
-      emailVerified: false,
-      status: 'active'
-    });
-
-    currentSandboxUser = newProfile;
-    localStorage.setItem('sams_session', JSON.stringify(newProfile));
-    if (sandboxUserListener) {
-      sandboxUserListener(newProfile);
-    }
-    return newProfile;
+  if (!verificationId || !otp) {
+    throw new Error("OTP verification is required for registration.");
   }
+
+  const confirmationResult = confirmationResults.get(verificationId);
+  if (!confirmationResult) {
+    throw new Error("OTP verification session expired.");
+  }
+
+  // Double check email/phone availability
+  const allUsers = await getUsers();
+  if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) {
+    throw new Error("Email already registered.");
+  }
+  if (allUsers.some(u => u.phoneNumber === fullPhone)) {
+    throw new Error("Mobile number already registered.");
+  }
+
+  // 1. Verify Phone OTP
+  await confirmationResult.confirm(otp);
+
+  // 2. Create the email/password account
+  const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+  const firebaseUser = userCredential.user;
+
+  // Send email verification
+  try {
+    await sendEmailVerification(firebaseUser);
+  } catch (e) {
+    console.warn("Could not send verification email: ", e);
+  }
+
+  // Save profile with verified fields
+  const profile = await createUserProfile(firebaseUser.uid, {
+    email,
+    displayName,
+    role: 'customer',
+    phoneNumber: fullPhone,
+    phoneVerified: true,
+    emailVerified: false,
+    status: 'active'
+  });
+
+  confirmationResults.delete(verificationId);
+  return profile;
 };
 
 export const loginWithEmailPassword = async (email: string, password: string): Promise<UserProfile> => {
-  if (isFirebaseConfigured) {
-    const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
-    const firebaseUser = userCredential.user;
-    
-    // Check and sync emailVerified status in db if changed
-    const profile = await getUser(firebaseUser.uid);
-    if (!profile) {
-      throw new Error("User profile not found in database.");
-    }
-    
-    return profile;
-  } else {
-    const usersJson = localStorage.getItem('sams_users');
-    const users: UserProfile[] = usersJson ? JSON.parse(usersJson) : [];
-    
-    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) {
-      throw new Error("Invalid email or password.");
-    }
-
-    if (user.role === 'admin' && password !== 'Admin@12345') {
-      throw new Error("Invalid credentials for SAMS Admin.");
-    }
-    
-    if (user.role === 'owner' && password !== 'Owner@123') {
-      throw new Error("Invalid password for Owner account.");
-    }
-
-    if (user.role === 'customer') {
-      // Allow the default seeded password or any valid registered user password
-      if (password !== 'Customer@123' && password.length < 5) {
-        throw new Error("Invalid password for Customer account.");
-      }
-    }
-
-    currentSandboxUser = user;
-    localStorage.setItem('sams_session', JSON.stringify(user));
-    if (sandboxUserListener) {
-      sandboxUserListener(user);
-    }
-    return user;
+  const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+  const firebaseUser = userCredential.user;
+  
+  let profile = await getUser(firebaseUser.uid);
+  if (!profile) {
+    profile = await createUserProfile(firebaseUser.uid, {
+      email: firebaseUser.email || email.trim(),
+      displayName: firebaseUser.displayName || 'Customer',
+      role: 'customer',
+      phoneNumber: firebaseUser.phoneNumber || '',
+      createdAt: Date.now(),
+      status: 'active'
+    });
   }
+  
+  return profile;
 };
 
 export const loginWithOtp = async (verificationId: string, otp: string): Promise<UserProfile> => {
-  if (isFirebaseConfigured) {
-    const confirmationResult = confirmationResults.get(verificationId);
-    if (!confirmationResult) {
-      throw new Error("OTP verification session expired.");
-    }
-
-    const userCredential = await confirmationResult.confirm(otp);
-    const firebaseUser = userCredential.user;
-    
-    const profile = await getUser(firebaseUser.uid);
-    if (!profile) {
-      await signOut(auth);
-      throw new Error("No SAMS account found associated with this mobile number. Please register first.");
-    }
-
-    confirmationResults.delete(verificationId);
-    return profile;
-  } else {
-    await verifyOtpOnly(verificationId, otp);
-
-    // Retrieve corresponding phone mapping
-    // Sandbox uses standard fallback numbers
-    const usersJson = localStorage.getItem('sams_users');
-    const users: UserProfile[] = usersJson ? JSON.parse(usersJson) : [];
-    
-    // Find any user for simulation
-    const user = users.find(u => u.role === 'customer');
-    if (!user) {
-      throw new Error("No customer user profile exists in sandbox local storage.");
-    }
-
-    currentSandboxUser = user;
-    localStorage.setItem('sams_session', JSON.stringify(user));
-    if (sandboxUserListener) {
-      sandboxUserListener(user);
-    }
-
-    return user;
+  const confirmationResult = confirmationResults.get(verificationId);
+  if (!confirmationResult) {
+    throw new Error("OTP verification session expired.");
   }
+
+  const userCredential = await confirmationResult.confirm(otp);
+  const firebaseUser = userCredential.user;
+  
+  let profile = await getUser(firebaseUser.uid);
+  if (!profile) {
+    profile = await createUserProfile(firebaseUser.uid, {
+      email: firebaseUser.email || '',
+      displayName: firebaseUser.displayName || 'Customer',
+      role: 'customer',
+      phoneNumber: firebaseUser.phoneNumber || '',
+      createdAt: Date.now(),
+      status: 'active'
+    });
+  }
+
+  confirmationResults.delete(verificationId);
+  return profile;
 };
 
 export const sendVerificationEmail = async (): Promise<void> => {
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (user) {
-      await sendEmailVerification(user);
-    } else {
-      throw new Error("No active user session.");
-    }
+  const user = auth.currentUser;
+  if (user) {
+    await sendEmailVerification(user);
   } else {
-    console.log("[SAMS Auth Sandbox] Verification email resent to user.");
+    throw new Error("No active user session.");
   }
 };
 
@@ -379,37 +298,28 @@ export const createOwnerAccountByAdmin = async (
 };
 
 export const logoutUser = async (): Promise<void> => {
-  if (isFirebaseConfigured) {
-    await signOut(auth);
-  } else {
-    currentSandboxUser = null;
-    localStorage.removeItem('sams_session');
-    if (sandboxUserListener) {
-      sandboxUserListener(null);
-    }
-  }
+  await signOut(auth);
 };
 
 export const subscribeToAuthChanges = (callback: (user: UserProfile | null) => void): (() => void) => {
-  if (isFirebaseConfigured) {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
-      if (firebaseUser) {
-        // Sync firebase user properties (like emailVerified) with our local session state
-        const profile = await getUser(firebaseUser.uid);
-        if (profile) {
-          profile.emailVerified = firebaseUser.emailVerified;
-        }
-        callback(profile);
-      } else {
-        callback(null);
+  const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+    if (firebaseUser) {
+      let profile = await getUser(firebaseUser.uid);
+      if (!profile) {
+        profile = await createUserProfile(firebaseUser.uid, {
+          email: firebaseUser.email || '',
+          displayName: firebaseUser.displayName || 'Customer',
+          role: 'customer',
+          phoneNumber: firebaseUser.phoneNumber || '',
+          createdAt: Date.now(),
+          status: 'active'
+        });
       }
-    });
-    return unsubscribe;
-  } else {
-    sandboxUserListener = callback;
-    callback(currentSandboxUser);
-    return () => {
-      sandboxUserListener = null;
-    };
-  }
+      profile.emailVerified = firebaseUser.emailVerified;
+      callback(profile);
+    } else {
+      callback(null);
+    }
+  });
+  return unsubscribe;
 };

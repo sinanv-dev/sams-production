@@ -126,7 +126,7 @@ export const Register: React.FC = () => {
       await registerWithOtp(email, password, name, phone, verificationId, otp);
       setSuccess(true);
       setTimeout(() => {
-        navigate('/customer/dashboard');
+        navigate('/dashboard');
       }, 1800);
     } catch (err: any) {
       setErrorMsg(err.message || 'Verification failed. Try again.');

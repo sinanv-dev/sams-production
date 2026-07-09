@@ -125,6 +125,7 @@ export default function App() {
           <Route path="/report" element={<ReportIssue />} />
           <Route path="/refund" element={<RefundPolicy />} />
           <Route path="/cookies" element={<CookiePolicy />} />
+          <Route path="/dashboard" element={<Navigate to="/customer/dashboard" replace />} />
 
           {/* Admin Protected Portal Routes */}
           <Route

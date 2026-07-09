@@ -537,39 +537,39 @@ export const getUsers = async (): Promise<UserProfile[]> => {
 };
 
 export const getUser = async (uid: string): Promise<UserProfile | null> => {
-  if (isFirebaseConfigured) {
-    const docRef = doc(db, 'users', uid);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return docSnap.data() as UserProfile;
-    }
-    return null;
-  } else {
-    const users = getStorageItem('users', SEED_USERS);
-    return users.find(u => u.uid === uid) || null;
+  const docRef = doc(db, 'users', uid);
+  const docSnap = await getDoc(docRef);
+  if (docSnap.exists()) {
+    const data = docSnap.data();
+    return {
+      uid,
+      email: data.email || '',
+      displayName: data.name || data.displayName || 'New User',
+      role: data.role || 'customer',
+      phoneNumber: data.phone || data.phoneNumber || '',
+      createdAt: data.createdAt || Date.now(),
+      status: data.status || 'active',
+      ...data
+    } as UserProfile;
   }
+  return null;
 };
 
-export const createUserProfile = async (uid: string, profile: Partial<UserProfile>): Promise<UserProfile> => {
-  const fullProfile: UserProfile = {
+export const createUserProfile = async (uid: string, profile: Partial<UserProfile> & { name?: string; phone?: string }): Promise<UserProfile> => {
+  const fullProfile = {
     uid,
     email: profile.email || '',
-    displayName: profile.displayName || 'New User',
+    displayName: profile.displayName || profile.name || 'New User',
+    name: profile.name || profile.displayName || 'New User',
     role: profile.role || 'customer',
-    phoneNumber: profile.phoneNumber || '',
+    phoneNumber: profile.phoneNumber || profile.phone || '',
+    phone: profile.phone || profile.phoneNumber || '',
     createdAt: Date.now(),
-    status: 'active',
+    status: profile.status || 'active',
   };
 
-  if (isFirebaseConfigured) {
-    await setDoc(doc(db, 'users', uid), fullProfile);
-  } else {
-    const users = getStorageItem('users', SEED_USERS);
-    const filtered = users.filter(u => u.uid !== uid);
-    filtered.push(fullProfile);
-    setStorageItem('users', filtered);
-  }
-  return fullProfile;
+  await setDoc(doc(db, 'users', uid), fullProfile);
+  return fullProfile as UserProfile;
 };
 
 export const updateUserProfile = async (uid: string, data: Partial<UserProfile>, callerRole?: string): Promise<void> => {

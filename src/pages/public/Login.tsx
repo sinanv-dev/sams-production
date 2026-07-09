@@ -71,7 +71,7 @@ export const Login: React.FC = () => {
         } else if (userProfile.role === 'owner') {
           navigate('/owner/dashboard');
         } else {
-          navigate('/customer/dashboard');
+          navigate('/dashboard');
         }
       }, 1200);
     } catch (err: any) {
@@ -129,7 +129,7 @@ export const Login: React.FC = () => {
         } else if (userProfile.role === 'owner') {
           navigate('/owner/dashboard');
         } else {
-          navigate('/customer/dashboard');
+          navigate('/dashboard');
         }
       }, 1200);
     } catch (err: any) {
