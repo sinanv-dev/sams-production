@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Save, AlertCircle, Plus, Trash2, Image, Upload, Check, Star } from 'lucide-react';
-import { createRoom, getApartments } from '../../../firebase/db';
+import { createRoom, getApartments, uploadFile } from '../../../firebase/db';
 import { Apartment } from '../../../types';
-import { storage, isFirebaseConfigured } from '../../../firebase/config';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { isFirebaseConfigured } from '../../../firebase/config';
 
 const AMENITY_OPTIONS = [
   'AC', 'Fan', 'WiFi', 'Attached Bathroom', 'Balcony', 'Wardrobe',
@@ -18,7 +17,7 @@ export const RoomCreate: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [uploadProgress, setUploadProgress] = useState<string>('');
-
+  
   // Form states
   const [form, setForm] = useState({
     apartmentId: '',
@@ -163,9 +162,10 @@ export const RoomCreate: React.FC = () => {
         for (let i = 0; i < uploadedPhotos.length; i++) {
           const item = uploadedPhotos[i];
           if (item.file) {
-            const fileRef = storageRef(storage, `rooms/${form.apartmentId}/${form.roomNumber}/${Date.now()}_${item.file.name}`);
-            const snapshot = await uploadBytes(fileRef, item.file);
-            const downloadUrl = await getDownloadURL(snapshot.ref);
+            const downloadUrl = await uploadFile(
+              item.file,
+              `rooms/${form.apartmentId}/${form.roomNumber}/${Date.now()}_${item.file.name}`
+            );
             finalPhotoUrls.push(downloadUrl);
           }
         }

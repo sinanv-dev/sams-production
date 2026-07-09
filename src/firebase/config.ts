@@ -3,6 +3,8 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
+import { getAnalytics } from 'firebase/analytics';
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -23,6 +25,7 @@ let app;
 let auth: any = null;
 let db: any = null;
 let storage: any = null;
+let analytics: any = null;
 
 if (isFirebaseConfigured) {
   try {
@@ -30,6 +33,9 @@ if (isFirebaseConfigured) {
     auth = getAuth(app);
     db = getFirestore(app);
     storage = getStorage(app);
+    if (typeof window !== 'undefined') {
+      analytics = getAnalytics(app);
+    }
     console.log("Firebase initialized successfully using environment variables.");
   } catch (error) {
     console.error("Error initializing real Firebase: ", error);
@@ -38,4 +44,4 @@ if (isFirebaseConfigured) {
   console.log("SAMS: Firebase configuration is missing in environment variables. Falling back to robust LocalStorage Sandbox mode.");
 }
 
-export { auth, db, storage };
+export { auth, db, storage, analytics };

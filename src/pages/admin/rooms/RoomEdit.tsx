@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, AlertCircle, Plus, Trash2, Upload, Check, Star } from 'lucide-react';
-import { getRooms, updateRoom, getApartments } from '../../../firebase/db';
+import { getRooms, updateRoom, getApartments, uploadFile } from '../../../firebase/db';
 import { Room, Apartment } from '../../../types';
-import { storage, isFirebaseConfigured } from '../../../firebase/config';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { isFirebaseConfigured } from '../../../firebase/config';
 
 const AMENITY_OPTIONS = [
   'AC', 'Fan', 'WiFi', 'Attached Bathroom', 'Balcony', 'Wardrobe',
@@ -207,9 +206,10 @@ export const RoomEdit: React.FC = () => {
         for (let i = 0; i < uploadedPhotos.length; i++) {
           const item = uploadedPhotos[i];
           if (item.file) {
-            const fileRef = storageRef(storage, `rooms/${form.apartmentId}/${form.roomNumber}/${Date.now()}_${item.file.name}`);
-            const snapshot = await uploadBytes(fileRef, item.file);
-            const downloadUrl = await getDownloadURL(snapshot.ref);
+            const downloadUrl = await uploadFile(
+              item.file,
+              `rooms/${form.apartmentId}/${form.roomNumber}/${Date.now()}_${item.file.name}`
+            );
             finalPhotoUrls.push(downloadUrl);
           } else if (item.storageUrl) {
             finalPhotoUrls.push(item.storageUrl);

@@ -336,7 +336,7 @@ export const CustomerBrowse: React.FC = () => {
                     <div>
                       <h3 className="font-extrabold text-sm text-navy-900 dark:text-slate-100 line-clamp-1">{apt?.name || 'SAMS Building'}</h3>
                       <div className="flex items-center justify-between mt-1">
-                        <span className="text-xs font-black text-brand-600 dark:text-brand-400">Room {room.roomNumber}</span>
+                        <span className="text-xs font-black text-brand-600 dark:text-brand-400">Room {room.roomNumber} (Floor {room.floor})</span>
                         <span className="text-[10px] text-navy-450 dark:text-slate-455 font-bold flex items-center">
                           <MapPin size={11} className="mr-0.5" /> {addressWord}
                         </span>
@@ -344,14 +344,18 @@ export const CustomerBrowse: React.FC = () => {
                     </div>
 
                     {/* Rent Metrics */}
-                    <div className="grid grid-cols-2 gap-3 bg-navy-50/50 dark:bg-slate-900/40 p-3 rounded-2xl border border-navy-100/50 dark:border-slate-700/50">
+                    <div className="grid grid-cols-3 gap-2 bg-navy-50/50 dark:bg-slate-900/40 p-3 rounded-2xl border border-navy-100/50 dark:border-slate-700/50">
                       <div>
                         <span className="block text-[8px] font-bold uppercase tracking-wider text-navy-400">Monthly Rent</span>
-                        <span className="text-sm font-black text-navy-900 dark:text-slate-200">₹{room.rent.toLocaleString('en-IN')}</span>
+                        <span className="text-xs font-black text-navy-900 dark:text-slate-200">₹{room.rent.toLocaleString('en-IN')}</span>
                       </div>
                       <div>
-                        <span className="block text-[8px] font-bold uppercase tracking-wider text-navy-400">Security Deposit</span>
-                        <span className="text-sm font-black text-navy-900 dark:text-slate-200">₹{room.deposit.toLocaleString('en-IN')}</span>
+                        <span className="block text-[8px] font-bold uppercase tracking-wider text-navy-400">Deposit</span>
+                        <span className="text-xs font-black text-navy-900 dark:text-slate-200">₹{room.deposit.toLocaleString('en-IN')}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[8px] font-bold uppercase tracking-wider text-navy-400">Owner</span>
+                        <span className="text-xs font-black text-navy-900 dark:text-slate-200 line-clamp-1">{apt?.ownerName || 'Landlord'}</span>
                       </div>
                     </div>
 

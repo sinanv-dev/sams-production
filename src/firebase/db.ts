@@ -2018,19 +2018,91 @@ export const subscribeToAuditLogs = (callback: (logs: AuditLog[]) => void): (() 
   }
 };
 
+const compressImage = async (file: File): Promise<Blob | File> => {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith('image/')) {
+      resolve(file);
+      return;
+    }
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(img.src);
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+      const MAX_SIZE = 1200;
+      if (width > height) {
+        if (width > MAX_SIZE) {
+          height = Math.round((height * MAX_SIZE) / width);
+          width = MAX_SIZE;
+        }
+      } else {
+        if (height > MAX_SIZE) {
+          width = Math.round((width * MAX_SIZE) / height);
+          height = MAX_SIZE;
+        }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(file);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(new File([blob], file.name, { type: 'image/jpeg' }));
+          } else {
+            resolve(file);
+          }
+        },
+        'image/jpeg',
+        0.8
+      );
+    };
+    img.onerror = () => {
+      resolve(file);
+    };
+  });
+};
+
 export const uploadFile = async (file: File, path: string): Promise<string> => {
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error("File size must not exceed 5 MB.");
+  }
+  const isDoc = path.startsWith('documents/') || path.includes('agreement') || path.includes('receipt');
+  if (isDoc) {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      throw new Error("Only PDF and image documents (JPEG/PNG/WEBP) are allowed.");
+    }
+  } else {
+    if (!file.type.startsWith('image/')) {
+      throw new Error("Only image files are allowed.");
+    }
+  }
+  let fileToUpload: File | Blob = file;
+  if (file.type.startsWith('image/')) {
+    try {
+      fileToUpload = await compressImage(file);
+    } catch (e) {
+      console.warn("Client-side image compression failed, uploading original: ", e);
+    }
+  }
   if (isFirebaseConfigured && storage) {
     const fileRef = storageRef(storage, path);
-    await uploadBytes(fileRef, file);
+    await uploadBytes(fileRef, fileToUpload);
     return await getDownloadURL(fileRef);
   } else {
-    // Sandbox simulation: return as base64 string
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => {
         resolve(reader.result as string);
       };
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(fileToUpload as Blob);
     });
   }
 };
