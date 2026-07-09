@@ -2,57 +2,77 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper check variables
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+
     function isAuthenticated() {
       return request.auth != null;
     }
-    
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    function getUserData() {
+
+    // Read the caller's own Firestore profile. Only call this after confirming
+    // the target document is NOT the caller's own doc, to avoid circular reads.
+    function callerData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
-    
-    function userExists() {
+
+    function callerExists() {
       return exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
-    
+
+    // Safe role helpers — only valid when the caller is NOT reading their own doc.
     function isAdmin() {
-      return isAuthenticated() && userExists() && getUserData().role == 'admin';
+      return isAuthenticated() && callerExists() && callerData().role == 'admin';
     }
-    
+
     function isPropertyOwner() {
-      return isAuthenticated() && userExists() && getUserData().role == 'owner';
+      return isAuthenticated() && callerExists() && callerData().role == 'owner';
     }
 
     function ownsApartment(apartmentId) {
-      return isAuthenticated() && 
+      return isAuthenticated() &&
         exists(/databases/$(database)/documents/apartments/$(apartmentId)) &&
         get(/databases/$(database)/documents/apartments/$(apartmentId)).data.ownerId == request.auth.uid;
     }
 
-    // Users Collection
+    // ─── Users Collection ─────────────────────────────────────────────────────
+    // KEY FIX: Any authenticated user may always read/write their OWN document
+    // (userId == request.auth.uid). This avoids the circular read: the isAdmin()
+    // helper calls callerData() which reads /users/{callerUid}. If callerUid ==
+    // userId the rule would recurse forever. By granting self-access first with
+    // a plain uid equality check, no helper function is needed.
     match /users/{userId} {
-      allow read: if isAuthenticated() && (
-        isOwner(userId) || 
-        isAdmin() || 
-        (isPropertyOwner() && resource.data.role == 'customer' && resource.data.ownerId == request.auth.uid)
-      );
+      // Self-read: always allowed – no helper needed, no circular dependency.
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+
+      // Admins can read any user. Safe: callerData() reads a DIFFERENT doc.
+      allow read: if isAuthenticated() && request.auth.uid != userId && isAdmin();
+
+      // Owners can read their own customers.
+      allow read: if isAuthenticated() && request.auth.uid != userId &&
+        isPropertyOwner() &&
+        resource.data.role == 'customer' &&
+        resource.data.ownerId == request.auth.uid;
+
+      // Create: any authenticated user can create their own doc (signup flow),
+      // or an admin can create any doc.
       allow create: if isAuthenticated() && (
-        isAdmin() || 
-        request.resource.data.role == 'customer'
+        request.auth.uid == userId ||
+        request.resource.data.role == 'customer' ||
+        isAdmin()
       );
+
+      // Update: self or admin or owner updating their customer.
       allow update: if isAuthenticated() && (
-        isOwner(userId) || 
-        isAdmin() || 
-        (isPropertyOwner() && resource.data.role == 'customer' && resource.data.ownerId == request.auth.uid)
+        request.auth.uid == userId ||
+        (request.auth.uid != userId && isAdmin()) ||
+        (request.auth.uid != userId && isPropertyOwner() &&
+          resource.data.role == 'customer' &&
+          resource.data.ownerId == request.auth.uid)
       );
-      allow delete: if isAdmin();
+
+      allow delete: if isAuthenticated() && request.auth.uid != userId && isAdmin();
     }
 
-    // Apartments Collection
+    // ─── Apartments Collection ────────────────────────────────────────────────
     match /apartments/{apartmentId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin() || (isPropertyOwner() && (
@@ -60,19 +80,19 @@ service cloud.firestore {
       ) && request.resource.data.ownerId == request.auth.uid);
     }
 
-    // Rooms Collection
+    // ─── Rooms Collection ─────────────────────────────────────────────────────
     match /rooms/{roomId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || (isPropertyOwner() && 
+      allow write: if isAdmin() || (isPropertyOwner() &&
         ownsApartment(request.resource.data.apartmentId || resource.data.apartmentId)
       );
     }
 
-    // Apartment Requests (Visit Requests) Collection
+    // ─── Apartment Requests (Visit Requests) ─────────────────────────────────
     match /apartmentRequests/{requestId} {
       allow read: if isAuthenticated() && (
-        resource.data.customerId == request.auth.uid || 
-        isAdmin() || 
+        resource.data.customerId == request.auth.uid ||
+        isAdmin() ||
         (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
       );
       allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
@@ -81,11 +101,11 @@ service cloud.firestore {
       ));
     }
 
-    // Payments Collection
+    // ─── Payments Collection ──────────────────────────────────────────────────
     match /payments/{paymentId} {
       allow read: if isAuthenticated() && (
-        resource.data.customerId == request.auth.uid || 
-        isAdmin() || 
+        resource.data.customerId == request.auth.uid ||
+        isAdmin() ||
         (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
       );
       allow write: if isAdmin() || (isPropertyOwner() && (
@@ -93,11 +113,11 @@ service cloud.firestore {
       ));
     }
 
-    // Electricity Bills Collection
+    // ─── Electricity Bills Collection ─────────────────────────────────────────
     match /electricity_bills/{billId} {
       allow read: if isAuthenticated() && (
-        resource.data.customerId == request.auth.uid || 
-        isAdmin() || 
+        resource.data.customerId == request.auth.uid ||
+        isAdmin() ||
         (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
       );
       allow write: if isAdmin() || (isPropertyOwner() && (
@@ -105,26 +125,27 @@ service cloud.firestore {
       ));
     }
 
-    // Complaints Collection
+    // ─── Complaints Collection ────────────────────────────────────────────────
     match /complaints/{complaintId} {
       allow read: if isAuthenticated() && (
-        resource.data.customerId == request.auth.uid || 
-        isAdmin() || 
+        resource.data.customerId == request.auth.uid ||
+        isAdmin() ||
         (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
       );
       allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
       allow update: if isAuthenticated() && (
-        resource.data.customerId == request.auth.uid || 
-        isAdmin() || 
+        resource.data.customerId == request.auth.uid ||
+        isAdmin() ||
         (isPropertyOwner() && ownsApartment(resource.data.apartmentId))
       );
       allow delete: if isAdmin();
     }
 
-    // Notifications Collection
+    // ─── Notifications Collection ─────────────────────────────────────────────
     match /notifications/{notificationId} {
       allow read, update, delete: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
       allow create: if isAuthenticated();
     }
   }
 }
+
