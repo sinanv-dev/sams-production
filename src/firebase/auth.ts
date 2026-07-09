@@ -1,4 +1,5 @@
-import { auth, isFirebaseConfigured } from './config';
+import { auth, db as dbImport, isFirebaseConfigured } from './config';
+import { initializeApp, deleteApp } from 'firebase/app';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
@@ -8,7 +9,11 @@ import {
   RecaptchaVerifier,
   signInWithPhoneNumber,
   ConfirmationResult,
-  sendEmailVerification
+  sendEmailVerification,
+  getAuth,
+  updatePassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential
 } from 'firebase/auth';
 import { createUserProfile, getUser, getUsers } from './db';
 import { UserProfile } from '../types';
@@ -321,17 +326,43 @@ export const sendVerificationEmail = async (): Promise<void> => {
 export const createOwnerAccountByAdmin = async (
   email: string,
   displayName: string,
-  phoneNumber: string
+  phoneNumber: string,
+  password: string
 ): Promise<UserProfile> => {
-  const uid = `owner-${Math.random().toString(36).substr(2, 9)}`;
-  const profile = await createUserProfile(uid, {
-    email,
-    displayName,
-    role: 'owner',
-    phoneNumber,
-  });
+  // Use a SECONDARY Firebase app instance so that the admin's current session
+  // on the primary app is never disturbed. Firebase client SDK switches the
+  // current user on createUserWithEmailAndPassword, which would log the admin out.
+  const secondaryApp = initializeApp(
+    {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    },
+    `secondary-${Date.now()}`
+  );
+  const secondaryAuth = getAuth(secondaryApp);
 
-  return profile;
+  try {
+    const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email.trim(), password);
+    const firebaseUser = userCredential.user;
+
+    // Sign out of secondary app immediately — we don't need the session
+    await signOut(secondaryAuth);
+
+    const profile = await createUserProfile(firebaseUser.uid, {
+      email: email.trim(),
+      displayName,
+      role: 'owner',
+      phoneNumber,
+      status: 'active',
+      createdAt: Date.now(),
+    });
+
+    return profile;
+  } finally {
+    // Always delete the secondary app to free SDK resources
+    await deleteApp(secondaryApp);
+  }
 };
 
 export const logoutUser = async (): Promise<void> => {
