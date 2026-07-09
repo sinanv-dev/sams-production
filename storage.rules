@@ -1,0 +1,39 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper check
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdminOrOwner() {
+      return isAuthenticated() &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        (firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'owner');
+    }
+
+    // Room Photos: upload allowed for authenticated owners or admins, read by all users
+    match /rooms/{apartmentId}/{roomNumber}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOwner(); // Admins and Owners manage room assets
+    }
+
+    // Customer Verification Documents (confidential Aadhar/PAN cards/Leases)
+    match /documents/{userId}/{allPaths=**} {
+      allow read: if isOwner(userId) || isAdminOrOwner(); // Allow owners/admins to audit profiles
+      allow write: if isOwner(userId) || isAdminOrOwner();
+    }
+
+    // User Profile Images
+    match /profiles/{userId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+  }
+}
