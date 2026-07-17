@@ -56,7 +56,7 @@ export const OwnerCreate: React.FC = () => {
       return;
     }
 
-    const phoneRegex = /^\+?[0-9\s\-()\]{7,20}$/;
+    const phoneRegex = /^\+?[0-9\s\-()]{7,20}$/;
     if (!phoneRegex.test(phoneNumber.trim())) {
       setErrorMsg('Please enter a valid phone number.');
       return;

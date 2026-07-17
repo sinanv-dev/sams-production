@@ -87,14 +87,21 @@ const generateDemoData = () => {
     "https://images.unsplash.com/photo-1460317442991-0ec209397118?w=800&auto=format&fit=crop&q=80",
     "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=800&auto=format&fit=crop&q=80"
   ];
+  const aptCities = ["Noida", "Hyderabad", "Bengaluru", "Bengaluru", "Mumbai"];
+  const aptStates = ["Uttar Pradesh", "Telangana", "Karnataka", "Karnataka", "Maharashtra"];
+  const aptPincodes = ["201301", "500032", "560066", "560034", "400053"];
 
   for (let i = 0; i < 5; i++) {
     apartments.push({
       id: `apt-${i + 1}`,
       name: aptNames[i],
       address: aptAddresses[i],
+      city: aptCities[i],
+      state: aptStates[i],
+      pincode: aptPincodes[i],
       description: `Premium Indian luxury complex featuring state-of-the-art security, 24/7 power backup, fitness center, high-speed WiFi, and covered parking. Managed by ${ownerNames[i]}.`,
       imageUrl: aptImages[i],
+      images: [aptImages[i]],
       amenities: ["Modern Gym", "24/7 Security", "Power Backup", "Covered Parking", "Water Supply"],
       totalRooms: 20,
       createdAt: baseTime - 280 * dayMs,

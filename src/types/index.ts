@@ -44,11 +44,16 @@ export interface Apartment {
   id: string;
   name: string;
   address: string;
+  city: string;
+  state: string;
+  pincode: string;
   description: string;
   imageUrl: string;
+  images: string[];         // Cloudinary secure_urls (gallery)
   amenities: string[];
   totalRooms: number;
   createdAt: number;
+  updatedAt?: number;
   ownerId?: string;
   ownerName?: string;
   floors?: number;
@@ -57,6 +62,8 @@ export interface Apartment {
   securityDeposit?: number;
   status?: 'active' | 'archived';
   googleMapsLink?: string;
+  latitude?: string;
+  longitude?: string;
   rules?: string;
   additionalImages?: string[];
   coverImage?: string;
