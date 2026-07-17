@@ -228,7 +228,189 @@ export const createRazorpayOrder = functions.https.onCall(async (data, context) 
   }
 });
 
-// ── 5. SECURE RAZORPAY WEBHOOK VERIFICATION ────────────────────────────────────
+// Helper: Common Transactional Database Reconciliation for Payments
+async function reconcilePaymentInTransaction(
+  transaction: admin.firestore.Transaction,
+  refPaymentId: string,
+  transactionId: string,
+  razorpayOrderId: string,
+  signature: string,
+  method: string,
+  gatewayResponse: any
+) {
+  const paymentRef = db.collection('payments').doc(refPaymentId);
+  const paymentSnapshot = await transaction.get(paymentRef);
+  if (!paymentSnapshot.exists) {
+    throw new Error('Payment record not found.');
+  }
+  const paymentData = paymentSnapshot.data()!;
+
+  // If already successful, do not double reconcile
+  if (paymentData.status === 'successful') {
+    return paymentData;
+  }
+
+  const customerId = paymentData.customerId;
+  const amount = paymentData.amount;
+  const paymentType = paymentData.paymentType;
+  const invoiceRef = paymentData.invoiceRef;
+  const roomId = paymentData.roomId;
+
+  // 1. Update Payment record to successful
+  transaction.update(paymentRef, {
+    status: 'successful',
+    transactionId: transactionId,
+    razorpayPaymentId: transactionId,
+    razorpayOrderId: razorpayOrderId,
+    signature: signature,
+    paymentMethod: method || 'razorpay',
+    gatewayResponse: gatewayResponse || null,
+    paymentDate: new Date().toISOString().substring(0, 10),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  // 2. Deduct Customer Outstanding Balance
+  const customerRef = db.collection('customers').doc(customerId);
+  const customerSnapshot = await transaction.get(customerRef);
+  if (customerSnapshot.exists) {
+    const custVal = customerSnapshot.data()!;
+    const newBal = Math.max(0, (custVal.outstandingBalance || 0) - amount);
+    transaction.update(customerRef, {
+      outstandingBalance: newBal,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  }
+
+  // 3. Update Room Financials and outstanding
+  if (roomId) {
+    const roomRef = db.collection('rooms').doc(roomId);
+    const roomSnapshot = await transaction.get(roomRef);
+    if (roomSnapshot.exists) {
+      const roomVal = roomSnapshot.data()!;
+      const currentCustomer = roomVal.currentCustomer || {};
+      if (currentCustomer.id === customerId) {
+        const newRoomCustBal = Math.max(0, (currentCustomer.outstandingBalance || 0) - amount);
+        const financials = roomVal.financials || { pendingRent: 0, electricityDue: 0, totalCollected: 0 };
+        
+        let newPendingRent = financials.pendingRent || 0;
+        let newElectricityDue = financials.electricityDue || 0;
+        if (paymentType === 'rent') {
+          newPendingRent = Math.max(0, newPendingRent - amount);
+        } else if (paymentType === 'electricity') {
+          newElectricityDue = Math.max(0, newElectricityDue - amount);
+        } else if (paymentType === 'combined') {
+          const remaining = Math.max(0, amount - newElectricityDue);
+          newElectricityDue = Math.max(0, newElectricityDue - amount);
+          newPendingRent = Math.max(0, newPendingRent - remaining);
+        }
+
+        transaction.update(roomRef, {
+          'currentCustomer.outstandingBalance': newRoomCustBal,
+          'financials.pendingRent': newPendingRent,
+          'financials.electricityDue': newElectricityDue,
+          'financials.lastPaymentDate': new Date().toISOString().substring(0, 10),
+          'financials.totalCollected': (financials.totalCollected || 0) + amount,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+    }
+  }
+
+  // 4. Update Invoice / Electricity Bill
+  if (invoiceRef) {
+    if (paymentType === 'rent') {
+      const invRef = db.collection('invoices').doc(invoiceRef);
+      const invSnapshot = await transaction.get(invRef);
+      if (invSnapshot.exists) {
+        const invVal = invSnapshot.data()!;
+        const nextPaid = (invVal.amountPaid || 0) + amount;
+        const balance = Math.max(0, (invVal.totalAmount || 0) - nextPaid);
+        transaction.update(invRef, {
+          amountPaid: nextPaid,
+          balance: balance,
+          status: balance === 0 ? 'paid' : 'partially-paid',
+          paymentDate: new Date().toISOString().substring(0, 10),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+    } else if (paymentType === 'electricity') {
+      const billRef = db.collection('electricity_bills').doc(invoiceRef);
+      const billSnapshot = await transaction.get(billRef);
+      if (billSnapshot.exists) {
+        const billVal = billSnapshot.data()!;
+        const nextPaid = (billVal.amountPaid || 0) + amount;
+        const balance = Math.max(0, (billVal.totalAmount || 0) - nextPaid);
+        transaction.update(billRef, {
+          amountPaid: nextPaid,
+          balance: balance,
+          status: balance === 0 ? 'paid' : 'partially-paid',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+    }
+  }
+
+  // 5. Log activity timeline inside the subcollection of payment
+  const activityId = `pact-${Date.now()}`;
+  const activityRef = db.collection('payments').doc(refPaymentId).collection('activities').doc(activityId);
+  transaction.set(activityRef, {
+    id: activityId,
+    paymentId: refPaymentId,
+    type: 'payment_successful',
+    title: 'Payment Successful',
+    description: `Razorpay signature verified successfully. Received ₹${amount} via ${method.toUpperCase()}.`,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return { ...paymentData, status: 'successful', amount };
+}
+
+// ── 5. SECURE RAZORPAY PAYMENT VERIFICATION ENDPOINT ───────────────────────────
+export const verifyRazorpayPayment = functions.https.onCall(async (data, context) => {
+  // Ensure user is authenticated in production
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { orderId, paymentId, signature, refPaymentId } = data;
+  if (!orderId || !paymentId || !signature || !refPaymentId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing verification parameters.');
+  }
+
+  // 1. Signature Verification
+  const secret = process.env.RAZORPAY_KEY_SECRET || 'mock_key_secret';
+  const generatedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(`${orderId}|${paymentId}`)
+    .digest('hex');
+
+  if (generatedSignature !== signature) {
+    throw new functions.https.HttpsError('invalid-argument', 'Razorpay signature verification failed.');
+  }
+
+  try {
+    // 2. Run database reconciliation inside a single transaction
+    let paymentRecord: any = null;
+    await db.runTransaction(async (transaction) => {
+      paymentRecord = await reconcilePaymentInTransaction(
+        transaction,
+        refPaymentId,
+        paymentId,
+        orderId,
+        signature,
+        'razorpay',
+        { orderId, paymentId, signature }
+      );
+    });
+
+    return { status: 'success', payment: paymentRecord };
+  } catch (error: any) {
+    console.error('Error verifying payment:', error);
+    throw new functions.https.HttpsError('internal', error.message || 'Payment reconciliation failed.');
+  }
+});
+
+// ── 6. SECURE RAZORPAY WEBHOOK VERIFICATION ────────────────────────────────────
 export const verifyRazorpayWebhook = functions.https.onRequest(async (req: any, res: any) => {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET || 'your_webhook_secret';
   const signature = req.headers['x-razorpay-signature'] as string;
@@ -258,64 +440,45 @@ export const verifyRazorpayWebhook = functions.https.onRequest(async (req: any, 
     const orderEntity = req.body.payload.order?.entity;
     const notes = orderEntity?.notes || {};
     const refPaymentId = notes.paymentId;
-    const paymentType = notes.type;
     const userId = notes.userId;
 
     if (refPaymentId && userId) {
-      const paymentRef = db.collection('payments').doc(refPaymentId);
-
-      // Update status to paid and log transactional details
-      await db.runTransaction(async (transaction) => {
-        transaction.update(paymentRef, {
-          status: 'paid',
-          paidAt: Date.now(),
-          razorpayPaymentId: paymentId,
-          razorpayOrderId: orderId,
-          paymentMethod: method,
-          signature: signature,
+      try {
+        await db.runTransaction(async (transaction) => {
+          await reconcilePaymentInTransaction(
+            transaction,
+            refPaymentId,
+            paymentId,
+            orderId,
+            signature,
+            method,
+            payload
+          );
         });
-      });
 
-      // Update utility bill if matching
-      if (paymentType === 'electricity') {
-        const eBillsSnapshot = await db
-          .collection('electricity_bills')
-          .where('customerId', '==', userId)
-          .get();
-        // Match bill based on billing month
-        const paymentDoc = await paymentRef.get();
-        const paymentData = paymentDoc.data();
-        if (paymentData) {
-          const match = eBillsSnapshot.docs.find(doc => doc.data().billingMonth === paymentData.billingMonth);
-          if (match) {
-            await match.ref.update({
-              status: 'paid',
-              paidAt: Date.now(),
-            });
-          }
-        }
+        // Notify the owner of the receipt
+        const userDoc = await db.collection('users').doc(userId).get();
+        const userName = userDoc.exists ? userDoc.data()?.displayName : 'Resident';
+        
+        await db.collection('notifications').add({
+          recipientId: 'admin-id',
+          title: 'Rent Collected (Razorpay Webhook)',
+          message: `${userName} completed rent payment of ₹${amount} via ${method}.`,
+          createdAt: Date.now(),
+          type: 'bill',
+        });
+
+        // Log successful verification
+        await db.collection('payment_logs').add({
+          orderId,
+          paymentId,
+          amount,
+          status: 'payment_verified_webhook',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (err) {
+        console.error('Transaction failed in webhook:', err);
       }
-
-      // Notify the owner of the receipt
-      const userDoc = await db.collection('users').doc(userId).get();
-      const userName = userDoc.exists ? userDoc.data()?.displayName : 'Resident';
-      
-      await db.collection('notifications').add({
-        recipientId: 'admin-id',
-        title: 'Rent Collected (Razorpay)',
-        message: `${userName} completed rent payment of ₹${amount} via ${method}.`,
-        createdAt: Date.now(),
-        type: 'bill',
-      });
-
-      // Log successful verification
-      await db.collection('payment_logs').add({
-        orderId,
-        paymentId,
-        amount,
-        status: 'payment_verified',
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
     }
   }
 
